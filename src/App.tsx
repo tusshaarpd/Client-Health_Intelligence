@@ -176,6 +176,39 @@ const statusLabel = (s: string) =>
 const impactBadge = (i: string) =>
   i === "high" ? "bg-red-100 text-red-700" : i === "medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600";
 
+/* ───────────── status tracker mock data (V2) ───────────── */
+type TrackerEntry = {
+  clientName: string;
+  alertDate: string;
+  daysElapsed: number;
+  alertType: string;
+  mrr: number;
+  outcome: "active_recovered" | "active_stable" | "churned" | "in_progress";
+  scoreChange: number; // score delta since alert
+  amAction: string;
+};
+
+const STATUS_TRACKER: TrackerEntry[] = [
+  { clientName: "Aqua Dental Studio", alertDate: "Feb 14, 2026", daysElapsed: 60, alertType: "Critical Drop", mrr: 497, outcome: "active_recovered", scoreChange: +28, amAction: "Re-engagement campaign sent" },
+  { clientName: "Bright Smile Orthodontics", alertDate: "Feb 20, 2026", daysElapsed: 54, alertType: "Critical Drop", mrr: 297, outcome: "in_progress", scoreChange: +3, amAction: "AI Text-Back enabled" },
+  { clientName: "Peak Performance Gym", alertDate: "Feb 25, 2026", daysElapsed: 49, alertType: "Churn Risk", mrr: 497, outcome: "in_progress", scoreChange: -2, amAction: "Workflow automation setup" },
+  { clientName: "Maple Leaf Dental", alertDate: "Jan 10, 2026", daysElapsed: 95, alertType: "Critical Drop", mrr: 297, outcome: "churned", scoreChange: -15, amAction: "No action taken" },
+  { clientName: "Summit Legal Group", alertDate: "Feb 08, 2026", daysElapsed: 66, alertType: "Churn Risk", mrr: 497, outcome: "active_stable", scoreChange: +12, amAction: "Review request campaign launched" },
+  { clientName: "Riverside Auto Repair", alertDate: "Jan 22, 2026", daysElapsed: 83, alertType: "Critical Drop", mrr: 297, outcome: "churned", scoreChange: -22, amAction: "AM contacted but declined help" },
+  { clientName: "Coastal Insurance Co", alertDate: "Feb 02, 2026", daysElapsed: 72, alertType: "Churn Risk", mrr: 497, outcome: "active_recovered", scoreChange: +19, amAction: "Pipeline reactivation done" },
+  { clientName: "Green Valley Landscaping", alertDate: "Feb 12, 2026", daysElapsed: 62, alertType: "Churn Risk", mrr: 297, outcome: "active_stable", scoreChange: +8, amAction: "Upsell to Pro plan" },
+];
+
+const outcomeStyle = (o: string) => {
+  switch (o) {
+    case "active_recovered": return { label: "Recovered", bg: "bg-emerald-100 text-emerald-700", icon: "✓" };
+    case "active_stable": return { label: "Stable", bg: "bg-blue-100 text-blue-700", icon: "~" };
+    case "churned": return { label: "Churned", bg: "bg-red-100 text-red-700", icon: "✕" };
+    case "in_progress": return { label: "In Progress", bg: "bg-amber-100 text-amber-700", icon: "⟳" };
+    default: return { label: "Unknown", bg: "bg-slate-100 text-slate-600", icon: "?" };
+  }
+};
+
 /* ───────────── micro-components ───────────── */
 function Sparkline({ data, color = "#3b82f6", w = 80, h = 28 }: { data: number[]; color?: string; w?: number; h?: number }) {
   const min = Math.min(...data);
@@ -376,6 +409,128 @@ export default function App() {
               )}
             </div>
           )}
+
+          {/* ─── V2: Client Status Tracker (60-day post-alert outcomes) ─── */}
+          {isV2 && (() => {
+            const completed = STATUS_TRACKER.filter((e) => e.daysElapsed >= 60);
+            const recovered = completed.filter((e) => e.outcome === "active_recovered").length;
+            const stable = completed.filter((e) => e.outcome === "active_stable").length;
+            const churned = completed.filter((e) => e.outcome === "churned").length;
+            const inProgress = STATUS_TRACKER.filter((e) => e.outcome === "in_progress").length;
+            const totalCompleted = completed.length;
+            const saveRate = totalCompleted > 0 ? Math.round(((recovered + stable) / totalCompleted) * 100) : 0;
+            const mrrSaved = completed.filter((e) => e.outcome !== "churned").reduce((s, e) => s + e.mrr, 0);
+            const mrrLost = completed.filter((e) => e.outcome === "churned").reduce((s, e) => s + e.mrr, 0);
+
+            return (
+              <div className="mb-6 bg-white rounded-xl border border-slate-200 p-5">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-2">
+                      📋 Client Status Tracker
+                      <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">V2</span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">Outcomes of CHI-alerted clients at 60 days post-alert. Measures whether early warnings actually prevented churn.</p>
+                  </div>
+                </div>
+
+                {/* Summary stats */}
+                <div className="grid grid-cols-5 gap-3 mb-5">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                    <p className="text-[10px] text-emerald-600 uppercase font-medium tracking-wide">Save Rate</p>
+                    <p className="text-2xl font-bold text-emerald-700 mt-1">{saveRate}%</p>
+                    <p className="text-[10px] text-emerald-500 mt-0.5">of alerted clients retained</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p className="text-[10px] text-emerald-600 uppercase font-medium tracking-wide">Recovered</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">{recovered}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">score ↑ post-alert</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p className="text-[10px] text-blue-600 uppercase font-medium tracking-wide">Stable</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">{stable}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">score held steady</p>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-[10px] text-red-600 uppercase font-medium tracking-wide">Churned</p>
+                    <p className="text-2xl font-bold text-red-700 mt-1">{churned}</p>
+                    <p className="text-[10px] text-red-500 mt-0.5">cancelled / lost</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-[10px] text-amber-600 uppercase font-medium tracking-wide">In Progress</p>
+                    <p className="text-2xl font-bold text-amber-700 mt-1">{inProgress}</p>
+                    <p className="text-[10px] text-amber-500 mt-0.5">&lt; 60 days elapsed</p>
+                  </div>
+                </div>
+
+                {/* MRR saved vs lost banner */}
+                <div className="flex gap-3 mb-4">
+                  <div className="flex-1 bg-gradient-to-r from-emerald-500 to-green-500 text-white rounded-lg p-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs opacity-90">MRR Saved</p>
+                      <p className="text-xl font-bold">${mrrSaved.toLocaleString()}/mo</p>
+                    </div>
+                    <span className="text-2xl">💰</span>
+                  </div>
+                  <div className="flex-1 bg-gradient-to-r from-red-500 to-rose-500 text-white rounded-lg p-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs opacity-90">MRR Lost to Churn</p>
+                      <p className="text-xl font-bold">${mrrLost.toLocaleString()}/mo</p>
+                    </div>
+                    <span className="text-2xl">📉</span>
+                  </div>
+                </div>
+
+                {/* Tracker table */}
+                <div className="overflow-hidden border border-slate-200 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left py-2 px-3 font-medium">Client</th>
+                        <th className="text-left py-2 px-3 font-medium">Alert Date</th>
+                        <th className="text-left py-2 px-3 font-medium">Days</th>
+                        <th className="text-left py-2 px-3 font-medium">Alert Type</th>
+                        <th className="text-left py-2 px-3 font-medium">AM Action</th>
+                        <th className="text-left py-2 px-3 font-medium">Δ Score</th>
+                        <th className="text-left py-2 px-3 font-medium">MRR</th>
+                        <th className="text-left py-2 px-3 font-medium">Outcome</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {STATUS_TRACKER.map((e, i) => {
+                        const out = outcomeStyle(e.outcome);
+                        const scoreColor = e.scoreChange > 0 ? "text-emerald-600" : e.scoreChange < 0 ? "text-red-600" : "text-slate-500";
+                        return (
+                          <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-medium text-slate-700">{e.clientName}</td>
+                            <td className="py-2.5 px-3 text-slate-500">{e.alertDate}</td>
+                            <td className="py-2.5 px-3 text-slate-500">{e.daysElapsed}d</td>
+                            <td className="py-2.5 px-3">
+                              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{e.alertType}</span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 text-xs max-w-[180px] truncate" title={e.amAction}>{e.amAction}</td>
+                            <td className={`py-2.5 px-3 font-semibold ${scoreColor}`}>
+                              {e.scoreChange > 0 ? "+" : ""}{e.scoreChange}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600">${e.mrr}</td>
+                            <td className="py-2.5 px-3">
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${out.bg}`}>
+                                <span>{out.icon}</span> {out.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-[10px] text-slate-400 mt-3 leading-relaxed">
+                  <strong>How to read this:</strong> Every time CHI flags a client as Critical or Churn Risk, we track whether that client is still active 60 days later. Save Rate = (Recovered + Stable) / Total Completed. This is the ultimate validation that CHI's early warnings actually prevent churn.
+                </p>
+              </div>
+            );
+          })()}
 
           {/* account list + detail panel */}
           <div className="flex gap-6">
