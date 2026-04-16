@@ -362,7 +362,6 @@ function generateCopilotResponse(query: string): string {
 
   // ── "compare" ──
   if (q.includes("compare") || q.includes(" vs ")) {
-    const names = CLIENTS.map((c) => c.name.toLowerCase());
     const matched = CLIENTS.filter((c) => q.includes(c.name.toLowerCase().split(" ")[0].toLowerCase()));
     if (matched.length >= 2) {
       const [a, b] = matched;
