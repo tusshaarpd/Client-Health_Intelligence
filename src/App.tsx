@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 
 /* ───────────── types ───────────── */
 type Domain = { label: string; score: number; weight: number };
@@ -257,6 +257,162 @@ function DomainBar({ label, score, weight }: Domain) {
   );
 }
 
+/* ───────────── AI co-pilot engine (V2) ───────────── */
+type ChatMessage = { role: "user" | "assistant"; text: string };
+
+const SUGGESTED_QUERIES = [
+  "Which clients need attention this week?",
+  "Why is Aqua Dental's score dropping?",
+  "Show me clients with pipeline problems",
+  "What's the biggest revenue risk right now?",
+  "Compare Bright Smile vs Peak Performance",
+  "Which clients improved this month?",
+];
+
+function generateCopilotResponse(query: string): string {
+  const q = query.toLowerCase();
+
+  // ── "which clients need attention" / priority / this week ──
+  if (q.includes("need attention") || q.includes("priority") || q.includes("this week") || q.includes("who should i focus")) {
+    const critical = CLIENTS.filter((c) => c.status === "critical").sort((a, b) => a.score - b.score);
+    const atRisk = CLIENTS.filter((c) => c.status === "at_risk").sort((a, b) => a.score - b.score);
+    let resp = `📋 **This week's priority list (ranked by severity):**\n\n`;
+    resp += `🔴 **Critical — act immediately:**\n`;
+    critical.forEach((c, i) => {
+      const worstDomain = c.domains.reduce((a, b) => a.score < b.score ? a : b);
+      resp += `${i + 1}. **${c.name}** — Score: ${c.score}/100 ($${c.mrr}/mo)\n`;
+      resp += `   Root cause: ${worstDomain.label} domain at ${worstDomain.score}/100\n`;
+      if (c.alerts[0]) resp += `   Alert: ${c.alerts[0].message}\n`;
+      resp += `\n`;
+    });
+    resp += `🟡 **At Risk — monitor closely:**\n`;
+    atRisk.forEach((c, i) => {
+      const worstDomain = c.domains.reduce((a, b) => a.score < b.score ? a : b);
+      resp += `${i + 1}. **${c.name}** — Score: ${c.score}/100 ($${c.mrr}/mo)\n`;
+      resp += `   Weakest area: ${worstDomain.label} at ${worstDomain.score}/100\n\n`;
+    });
+    const totalMrr = [...critical, ...atRisk].reduce((s, c) => s + c.mrr, 0);
+    resp += `💰 **Total MRR at risk: $${totalMrr.toLocaleString()}/mo across ${critical.length + atRisk.length} accounts.**\n\n`;
+    resp += `I'd start with ${critical[0]?.name} — lowest score and highest revenue impact.`;
+    return resp;
+  }
+
+  // ── "why is [client] dropping" / specific client analysis ──
+  const clientMatch = CLIENTS.find((c) => q.includes(c.name.toLowerCase().split(" ")[0].toLowerCase()));
+  if (clientMatch && (q.includes("why") || q.includes("dropping") || q.includes("score") || q.includes("tell me about") || q.includes("what's wrong"))) {
+    const trendDelta = clientMatch.trend[clientMatch.trend.length - 1] - clientMatch.trend[0];
+    const sorted = [...clientMatch.domains].sort((a, b) => a.score - b.score);
+    let resp = `🔍 **${clientMatch.name} — Deep Dive**\n\n`;
+    resp += `**Current Score: ${clientMatch.score}/100** (${statusLabel(clientMatch.status)})\n`;
+    resp += `**7-Day Trend:** ${trendDelta > 0 ? "↑" : "↓"} ${Math.abs(trendDelta)} points\n`;
+    resp += `**MRR:** $${clientMatch.mrr}/mo\n\n`;
+    resp += `**Domain Breakdown:**\n`;
+    clientMatch.domains.forEach((d) => {
+      const bar = d.score >= 70 ? "🟢" : d.score >= 50 ? "🟡" : "🔴";
+      resp += `${bar} ${d.label}: ${d.score}/100 (${(d.weight * 100).toFixed(0)}% weight)\n`;
+    });
+    resp += `\n**Root Cause Analysis:**\n`;
+    resp += `The primary drag is **${sorted[0].label}** at ${sorted[0].score}/100.`;
+    if (sorted[1].score < 50) resp += ` **${sorted[1].label}** is also concerning at ${sorted[1].score}/100.`;
+    resp += `\n\n`;
+    if (clientMatch.alerts.length > 0) {
+      resp += `**Active Alerts:**\n`;
+      clientMatch.alerts.forEach((a) => resp += `⚠️ ${a.message} (${a.ts})\n`);
+      resp += `\n`;
+    }
+    if (clientMatch.recommendations.length > 0) {
+      resp += `**Recommended Actions:**\n`;
+      clientMatch.recommendations.forEach((r, i) => resp += `${i + 1}. ${r.text}\n`);
+    }
+    return resp;
+  }
+
+  // ── "pipeline problems" ──
+  if (q.includes("pipeline")) {
+    const pipelineIssues = CLIENTS.filter((c) => {
+      const pipeline = c.domains.find((d) => d.label === "Pipeline");
+      return pipeline && pipeline.score < 60;
+    }).sort((a, b) => {
+      const aP = a.domains.find((d) => d.label === "Pipeline")!.score;
+      const bP = b.domains.find((d) => d.label === "Pipeline")!.score;
+      return aP - bP;
+    });
+    let resp = `🔍 **Clients with Pipeline Problems** (score <60):\n\n`;
+    pipelineIssues.forEach((c, i) => {
+      const ps = c.domains.find((d) => d.label === "Pipeline")!.score;
+      resp += `${i + 1}. **${c.name}** — Pipeline: ${ps}/100, Overall: ${c.score}/100 ($${c.mrr}/mo)\n`;
+    });
+    resp += `\n${pipelineIssues.length} clients have weak pipelines. The common pattern: leads are being added but not contacted within 48 hours. A lead follow-up workflow automation would address this across all accounts.`;
+    return resp;
+  }
+
+  // ── "revenue risk" ──
+  if (q.includes("revenue") || q.includes("mrr") || q.includes("money")) {
+    const atRiskClients = CLIENTS.filter((c) => c.status === "critical" || c.status === "at_risk").sort((a, b) => b.mrr - a.mrr);
+    const totalRisk = atRiskClients.reduce((s, c) => s + c.mrr, 0);
+    let resp = `💰 **Revenue Risk Assessment:**\n\n`;
+    resp += `**Total MRR at risk: $${totalRisk.toLocaleString()}/mo** across ${atRiskClients.length} accounts.\n\n`;
+    resp += `Ranked by revenue impact:\n`;
+    atRiskClients.forEach((c, i) => {
+      resp += `${i + 1}. **${c.name}** — $${c.mrr}/mo (Score: ${c.score}, ${statusLabel(c.status)})\n`;
+    });
+    resp += `\nIf we lose all critical accounts, that's $${CLIENTS.filter((c) => c.status === "critical").reduce((s, c) => s + c.mrr, 0).toLocaleString()}/mo in immediate revenue loss. The highest-leverage save is ${atRiskClients[0]?.name} at $${atRiskClients[0]?.mrr}/mo.`;
+    return resp;
+  }
+
+  // ── "compare" ──
+  if (q.includes("compare") || q.includes(" vs ")) {
+    const names = CLIENTS.map((c) => c.name.toLowerCase());
+    const matched = CLIENTS.filter((c) => q.includes(c.name.toLowerCase().split(" ")[0].toLowerCase()));
+    if (matched.length >= 2) {
+      const [a, b] = matched;
+      let resp = `⚖️ **${a.name} vs ${b.name}:**\n\n`;
+      resp += `| Metric | ${a.name.split(" ")[0]} | ${b.name.split(" ")[0]} |\n`;
+      resp += `|--------|---------|----------|\n`;
+      resp += `| Overall Score | ${a.score} | ${b.score} |\n`;
+      resp += `| Status | ${statusLabel(a.status)} | ${statusLabel(b.status)} |\n`;
+      resp += `| MRR | $${a.mrr} | $${b.mrr} |\n`;
+      a.domains.forEach((d, i) => {
+        resp += `| ${d.label} | ${d.score} | ${b.domains[i].score} |\n`;
+      });
+      resp += `\n`;
+      const aBetter = a.score > b.score;
+      resp += `**${aBetter ? a.name : b.name}** is healthier overall. The gap is widest in `;
+      let maxGap = 0, gapDomain = "";
+      a.domains.forEach((d, i) => {
+        const gap = Math.abs(d.score - b.domains[i].score);
+        if (gap > maxGap) { maxGap = gap; gapDomain = d.label; }
+      });
+      resp += `**${gapDomain}** (${maxGap} point difference).`;
+      return resp;
+    }
+    return `I can compare any two clients. Try: "Compare Aqua Dental vs Bright Smile" or name any two sub-accounts.`;
+  }
+
+  // ── "improved" / "getting better" ──
+  if (q.includes("improv") || q.includes("getting better") || q.includes("positive")) {
+    const improving = CLIENTS.filter((c) => c.trend[c.trend.length - 1] >= c.trend[c.trend.length - 2]).sort((a, b) => {
+      const aD = a.trend[a.trend.length - 1] - a.trend[0];
+      const bD = b.trend[b.trend.length - 1] - b.trend[0];
+      return bD - aD;
+    });
+    let resp = `📈 **Clients Trending Up:**\n\n`;
+    if (improving.length === 0) {
+      resp += `No clients show an upward trend this week. This is a signal to review intervention effectiveness across the portfolio.`;
+    } else {
+      improving.forEach((c, i) => {
+        const delta = c.trend[c.trend.length - 1] - c.trend[0];
+        resp += `${i + 1}. **${c.name}** — Score: ${c.score} (↑${delta > 0 ? "+" : ""}${delta} over 7 days)\n`;
+      });
+      resp += `\n${improving.length} clients are heading in the right direction. ${improving[0].name} shows the strongest recovery.`;
+    }
+    return resp;
+  }
+
+  // ── fallback ──
+  return `I can help you with:\n\n• **"Which clients need attention this week?"** — ranked priority list\n• **"Why is [client name]'s score dropping?"** — root cause breakdown\n• **"Show me clients with pipeline problems"** — domain-specific filter\n• **"What's the biggest revenue risk?"** — MRR impact analysis\n• **"Compare [client A] vs [client B]"** — side-by-side\n• **"Which clients improved this month?"** — positive trends\n\nTry any of the above, or ask about a specific client by name!`;
+}
+
 /* ───────────── main app ───────────── */
 export default function App() {
   const [version, setVersion] = useState<"v1" | "v2">("v1");
@@ -264,6 +420,17 @@ export default function App() {
   const [filter, setFilter] = useState<"all" | "critical" | "at_risk" | "healthy">("all");
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: "assistant", text: "👋 Hi! I'm your CHI Co-pilot. I monitor all your sub-accounts 24/7.\n\nAsk me anything — which clients need attention, why a score is dropping, or what actions to take. Try one of the suggestions below!" }
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
 
   const isV2 = version === "v2";
 
@@ -318,6 +485,12 @@ export default function App() {
           {isV2 && (
             <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-600 hover:bg-slate-50 text-left">
               <span>⚡</span> Actions
+            </button>
+          )}
+          {isV2 && (
+            <button onClick={() => setCopilotOpen(!copilotOpen)} className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left ${copilotOpen ? "bg-indigo-50 text-indigo-700 font-medium" : "text-slate-600 hover:bg-slate-50"}`}>
+              <span>🤖</span> AI Co-pilot
+              <span className="ml-auto text-[9px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-medium">NEW</span>
             </button>
           )}
           <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-600 hover:bg-slate-50 text-left">
@@ -732,6 +905,131 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* ─── V2: AI Co-pilot floating button ─── */}
+      {isV2 && !copilotOpen && (
+        <button
+          onClick={() => setCopilotOpen(true)}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg flex items-center justify-center text-2xl z-50 hover:scale-105 transition-all"
+          title="Open AI Co-pilot"
+        >
+          🤖
+        </button>
+      )}
+
+      {/* ─── V2: AI Co-pilot chat panel ─── */}
+      {isV2 && copilotOpen && (
+        <div className="fixed right-0 top-0 h-screen w-[420px] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col">
+          {/* header */}
+          <div className="px-5 py-4 border-b border-slate-200 bg-gradient-to-r from-indigo-600 to-blue-600 text-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center text-lg backdrop-blur-sm">🤖</div>
+                <div>
+                  <h3 className="font-semibold text-sm">CHI Co-pilot</h3>
+                  <p className="text-[10px] text-white/70">AI-powered client intelligence assistant</p>
+                </div>
+              </div>
+              <button onClick={() => setCopilotOpen(false)} className="text-white/70 hover:text-white text-lg">✕</button>
+            </div>
+          </div>
+
+          {/* chat messages */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {chatMessages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-indigo-600 text-white rounded-br-md"
+                    : "bg-slate-100 text-slate-700 rounded-bl-md"
+                }`}>
+                  <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{
+                    __html: msg.text
+                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                      .replace(/\n/g, '<br/>')
+                  }} />
+                </div>
+              </div>
+            ))}
+            {isTyping && (
+              <div className="flex justify-start">
+                <div className="bg-slate-100 rounded-2xl rounded-bl-md px-4 py-3 text-sm text-slate-400">
+                  <span className="inline-flex gap-1">
+                    <span className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </span>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* suggested queries */}
+          {chatMessages.length <= 2 && (
+            <div className="px-4 pb-2">
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-2">Try asking:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {SUGGESTED_QUERIES.map((sq, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setChatInput("");
+                      setChatMessages((prev) => [...prev, { role: "user", text: sq }]);
+                      setIsTyping(true);
+                      setTimeout(() => {
+                        const response = generateCopilotResponse(sq);
+                        setChatMessages((prev) => [...prev, { role: "assistant", text: response }]);
+                        setIsTyping(false);
+                      }, 800 + Math.random() * 700);
+                    }}
+                    className="text-[11px] px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 text-left leading-tight"
+                  >
+                    {sq}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* input */}
+          <div className="px-4 py-3 border-t border-slate-200 bg-white">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!chatInput.trim() || isTyping) return;
+                const userMsg = chatInput.trim();
+                setChatInput("");
+                setChatMessages((prev) => [...prev, { role: "user", text: userMsg }]);
+                setIsTyping(true);
+                setTimeout(() => {
+                  const response = generateCopilotResponse(userMsg);
+                  setChatMessages((prev) => [...prev, { role: "assistant", text: response }]);
+                  setIsTyping(false);
+                }, 800 + Math.random() * 700);
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about your clients..."
+                className="flex-1 px-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                disabled={isTyping}
+              />
+              <button
+                type="submit"
+                disabled={isTyping || !chatInput.trim()}
+                className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+            </form>
+            <p className="text-[9px] text-slate-400 mt-2 text-center">CHI Co-pilot reads live health data from all your sub-accounts</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
